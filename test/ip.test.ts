@@ -6,6 +6,7 @@ import {
 	formatCidr,
 	formatIp,
 	isPublic,
+	isTrustedProxy,
 	parseCidr,
 	parseIp,
 	resolveClientIp,
@@ -135,6 +136,17 @@ describe('public addresses', () => {
 			expect(isPublic(ip(priv)), priv).toBe(false);
 		}
 		expect(isPublic(ip('172.32.0.1'))).toBe(true);
+	});
+});
+
+describe('trusted proxies are never judged', () => {
+	it('knows loopback and private proxy addresses', () => {
+		const trusted = DEFAULT_TRUSTED_PROXIES.map((c) => parseCidr(c) as Cidr);
+		for (const proxy of ['127.0.0.1', '::1', '172.18.0.2', '10.1.2.3', 'fd00::5'])
+			expect(isTrustedProxy(ip(proxy), trusted), proxy).toBe(true);
+		for (const visitor of ['8.8.8.8', '203.0.113.5', '2001:db8::1'])
+			expect(isTrustedProxy(ip(visitor), trusted), visitor).toBe(false);
+		expect(isTrustedProxy(ip('10.0.0.5'), [parseCidr('192.168.0.0/16') as Cidr])).toBe(false);
 	});
 });
 

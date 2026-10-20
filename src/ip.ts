@@ -198,6 +198,13 @@ export const DEFAULT_TRUSTED_PROXIES = [
 ];
 
 /**
+ * Whether an address is one of the trusted proxies. Such an address is never judged: a request that
+ * reaches us without a forwarded address looks like it comes from the proxy itself (or from loopback in
+ * development), and flagging or banning that would block every visitor at once.
+ */
+export const isTrustedProxy = (ip: Ip, trusted: readonly Cidr[]) => trusted.some((range) => cidrContains(range, ip));
+
+/**
  * The visitor's address: the connecting address, unless it's a trusted proxy; then the rightmost
  * address in `X-Forwarded-For` that isn't a trusted proxy (addresses further left can be forged by the
  * visitor). Null when nothing valid is found.

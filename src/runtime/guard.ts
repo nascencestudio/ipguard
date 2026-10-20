@@ -15,6 +15,7 @@ import {
 	formatIp,
 	type Ip,
 	isSingleAddress,
+	isTrustedProxy,
 	parseCidr,
 	resolveClientIp,
 	subjectOf,
@@ -115,7 +116,8 @@ export async function checkAction(context: RequestLike, options: { key: string }
 	const message = settings.blockMessage;
 	if (!settings.enabled || disabledByEnvironment()) return { outcome: 'allow', decision: { action: 'off' }, message };
 	const ip = clientIp(context);
-	if (!ip) return { outcome: 'allow', decision: { action: 'unknown-address' }, message };
+	// No address, or only the proxy's own (no forwarded address): never judged (fail open).
+	if (!ip || isTrustedProxy(ip, trusted)) return { outcome: 'allow', decision: { action: 'unknown-address' }, message };
 
 	const entries = await loadEntries();
 	const now = Date.now();
@@ -174,7 +176,7 @@ export async function recordAttempt(context: RequestLike): Promise<void> {
 	const settings = await loadSettings();
 	if (!settings.enabled || disabledByEnvironment()) return;
 	const ip = clientIp(context);
-	if (!ip) return;
+	if (!ip || isTrustedProxy(ip, trusted)) return;
 	if (listsOf(await loadEntries(), ip, Date.now()).whitelist) return;
 	await addAttempt(formatCidr(subjectOf(ip)), settings.windowSeconds);
 }

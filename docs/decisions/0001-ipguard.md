@@ -49,7 +49,10 @@ rebuilt in TypeScript, not ported. StudioCMS has nothing comparable.
    out anyway (say your address changed and someone banned the new one), recovery needs no database
    editing: the environment variable `IPGUARD_DISABLE=1` turns all blocking off until you fix the lists.
 6. **The visitor's real address**: only from the configured trusted proxy (our Caddy container) via
-   `X-Forwarded-For`, else Astro's `clientAddress`. A forged header from anyone else is ignored.
+   `X-Forwarded-For`, else Astro's `clientAddress`. A forged header from anyone else is ignored. An
+   address that is itself a trusted proxy (loopback, the Docker network) is **never counted, flagged or
+   banned**: a request without a forwarded address looks like the proxy's own, and judging it would
+   block every visitor (found while testing webforms, 2026-10-20).
 7. **Dashboard → IP Guard** (admins only): Flagged (the review queue), Blacklist, Banned, Whitelist,
    Settings (on/off, rate limit, threshold, block message; AbuseIPDB key write-only, or from the
    `ABUSEIPDB_API_KEY` environment variable, which wins), and **Check an address**: what each step would
