@@ -1,6 +1,6 @@
 # 0001. IP Guard: IP reputation, review lists and site-wide bans for StudioCMS
 
-- Status: Proposed (design for review, 2026-10-19). Decisions marked *(user)* were made by the user.
+- Status: Accepted (2026-10-19).
 - Date: 2026-10-19
 
 ## Context

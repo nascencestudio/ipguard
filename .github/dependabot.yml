@@ -1,0 +1,35 @@
+# Dependency updates.
+#
+# - GitHub Actions: keeps the full-SHA pins in .github/workflows current.
+# - npm (pnpm, from pnpm-lock.yaml): one weekly PR with minor and patch updates grouped;
+#   majors separately (Preact 11 and TypeScript 7 are held back: Astro's Preact peer and
+#   TypeScript tooling).
+# - Cooldown matches pnpm-workspace.yaml's minimumReleaseAge (3 days). CI installs with the
+#   frozen lockfile, so pnpm's trust and build-script policies apply to every PR.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 3
+    commit-message:
+      prefix: ci
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 3
+      semver-major-days: 14
+    versioning-strategy: increase
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+    commit-message:
+      prefix: deps

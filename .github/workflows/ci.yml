@@ -1,0 +1,41 @@
+# Checks for every push and pull request: lint, audit, types, unit tests, build, and the
+# package contents. Actions are pinned to full commit SHAs (Dependabot keeps them current).
+# Browser tests run in nascencestudio/tapestry-playground (its site installs this package from
+# npm).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Lint, audit, types, unit tests, build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm audit
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+      - name: Package contents (dist, licenses, README, LICENSE only)
+        run: |
+          pnpm pack --pack-destination "$RUNNER_TEMP"
+          tar -tzf "$RUNNER_TEMP"/*.tgz | grep -vE '^package/(dist/|licenses/|README.md$|LICENSE$|package.json$)' && exit 1 || true

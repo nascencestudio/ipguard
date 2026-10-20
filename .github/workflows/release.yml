@@ -1,0 +1,50 @@
+# Publishes @nascencestudio/ipguard to npm with provenance (a signed attestation
+# linking the package to this workflow run and commit), when a GitHub release is published.
+#
+# Authentication is npm trusted publishing only (OIDC; no token stored anywhere): this repository,
+# `release.yml`, environment `npm`, allowed actions: stage only. Bump `version` in package.json and tag the
+# release `v<version>`; then approve the staged version on npmjs.com (2FA).
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write # npm provenance and trusted publishing (OIDC)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          registry-url: https://registry.npmjs.org
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - name: The tag matches the package version
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          test "$version" = "${GITHUB_REF_NAME#v}" || { echo "package.json is $version, the release is $GITHUB_REF_NAME"; exit 1; }
+      - run: pnpm lint
+      - run: pnpm audit
+      - run: pnpm typecheck
+      - run: pnpm test
+      # Staged: the version goes live only after a maintainer approves it with 2FA (npmjs.com or
+      # `pnpm stage approve`). The trusted publisher keeps "allow npm publish" off, so a stolen
+      # workflow identity can only stage, never release.
+      - run: pnpm stage publish --provenance --access public --no-git-checks

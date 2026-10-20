@@ -1,0 +1,51 @@
+# Supply-chain hardening, the same rules as Tapestry's repository (docs/decisions/0003).
+# Every exception (allowBuilds, overrides, ignored advisories) needs a written reason.
+
+# Refuse package versions published less than 3 days ago (value is minutes).
+minimumReleaseAge: 4320
+# Except our own packages (Nascence Studio's other repositories): published by their CI with
+# provenance and approved with 2FA (trustPolicy still applies); new releases are used at once.
+minimumReleaseAgeExclude:
+  - '@nascencestudio/tapestry'
+  - '@nascencestudio/medialibrary'
+  - '@nascencestudio/webforms'
+
+# Fail if a package's trust evidence (provenance / trusted publisher) is weaker than in
+# earlier versions: a common sign of a hijacked maintainer account. Only for versions
+# published in the last 180 days (minutes).
+trustPolicy: no-downgrade
+trustPolicyIgnoreAfter: 259200
+
+# Transitive dependencies may only come from the registry, never git/tarball URLs.
+blockExoticSubdeps: true
+
+# Dependency lifecycle scripts are blocked unless listed here.
+strictDepBuilds: true
+allowBuilds:
+  # Bundler used by Vite/Astro (dev dependency); postinstall verifies its platform binary.
+  esbuild: true
+  # Astro's image service (dev dependency); installs its platform binary.
+  sharp: true
+  # Denied: optional native accelerators with JS fallbacks.
+  '@parcel/watcher': false
+  msgpackr-extract: false
+
+# Advisories reviewed and judged not exploitable here. Reason and re-check date per entry.
+auditConfig:
+  ignoreGhsas:
+    # braces <=3.0.3 (no patch, published 2026-09-18). Dev dependency (StudioCMS route
+    # patterns); exploit needs attacker-controlled glob patterns. Re-check 2026-11-01.
+    - GHSA-vfj7-8cjw-p6xm
+
+# Respect "engines" fields and pin exact versions when adding dependencies.
+engineStrict: true
+saveExact: true
+
+# Refuse to run scripts if node_modules is out of sync with the lockfile.
+verifyDepsBeforeRun: error
+
+# Forced versions of transitive dependencies. Reason and exit condition per entry.
+overrides:
+  # GHSA-68fv-2mgg-jv7q (high, event-loop DoS via crafted source maps; build-time only, via
+  # postcss/css-tree). 1.2.2 is the fix. Remove once vite/postcss/css-tree resolve >=1.2.2.
+  source-map-js: 1.2.2

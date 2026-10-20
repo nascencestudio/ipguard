@@ -1,0 +1,63 @@
+---
+/**
+ * IP Guard's inner sidebar (ADR 0001 §7). Plain links with StudioCMS's inner-sidebar classes, marked
+ * active here (StudioCMS's `SidebarLink` decides by path alone, and every view shares one path).
+ * StudioCMS's double-sidebar script expects #back-to-outer and #show-page (mobile navigation).
+ */
+/// <reference types="studiocms/v/types" />
+import { Button } from 'studiocms:ui/components/button';
+import { Icon } from 'studiocms:ui/components/icon';
+import { loadEntries } from './store.js';
+
+const here = Astro.url.pathname;
+const view = Astro.url.searchParams.get('view') ?? 'flagged';
+const flagged = (await loadEntries().catch(() => [])).filter((e) => e.list === 'flagged').length;
+const links = [
+	{ id: 'flagged', label: flagged ? `Flagged (${flagged})` : 'Flagged', icon: 'heroicons:flag' },
+	{ id: 'blacklist', label: 'Blacklist', icon: 'heroicons:no-symbol' },
+	{ id: 'banned', label: 'Banned', icon: 'heroicons:lock-closed' },
+	{ id: 'whitelist', label: 'Whitelist', icon: 'heroicons:check-badge' },
+	{ id: 'settings', label: 'Settings', icon: 'heroicons:cog-6-tooth' },
+	{ id: 'check', label: 'Check an address', icon: 'heroicons:magnifying-glass' },
+] as const;
+---
+
+<div class="inner-sidebar-header">
+	<Button variant="solid" color="primary" size="md" id="back-to-outer" class="mobile-btn mid-size-btn">
+		<Icon name="heroicons:arrow-left" width={24} height={24} slot="start-content" />
+	</Button>
+	<p class="ipguard-nav__title">IP Guard</p>
+	<Button variant="solid" color="primary" size="md" id="show-page" class="mobile-btn">
+		<Icon name="heroicons:x-mark" width={24} height={24} slot="start-content" />
+	</Button>
+</div>
+<nav class="ipguard-nav__links" aria-label="IP Guard" data-ipguard-nav>
+	{
+		links.map((link) => (
+			<a
+				class:list={['inner-sidebar-link', { active: link.id === view }]}
+				href={link.id === 'flagged' ? here : `${here}?view=${link.id}`}
+				aria-current={link.id === view ? 'page' : undefined}
+				data-ipguard-nav-link={link.id}
+			>
+				<Icon name={link.icon} class="sidebar-link-icon" width={24} height={24} />
+				<span>{link.label}</span>
+			</a>
+		))
+	}
+</nav>
+
+<style>
+	.ipguard-nav__title {
+		flex: 1;
+		margin: 0;
+		font-weight: 600;
+		font-size: 1.125rem;
+	}
+	.ipguard-nav__links {
+		display: flex;
+		flex-direction: column;
+		gap: 0.4rem;
+		width: 100%;
+	}
+</style>

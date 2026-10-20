@@ -1,0 +1,408 @@
+---
+/**
+ * Dashboard → IP Guard (ADR 0001 §7), admins only: Flagged (the review queue), Blacklist, Banned,
+ * Whitelist, Settings and Check an address. Server-rendered with plain forms posting to
+ * /_ipguard/admin, which redirects back with `saved` or `error=<code>`. Row buttons belong to a small form
+ * per row (`form="…"`), since forms can't nest inside the bulk-selection form.
+ */
+/// <reference types="studiocms/v/types" />
+import { type AdminError, ERRORS } from '../admin.js';
+import { formatCidr, formatIp, parseIp, subjectOf } from '../ip.js';
+import { decide, type IndexedEntry, type ListName, listsOf, WINDOWS } from '../model.js';
+import { abuseIpDb, apiKeyOf, clientIp, disabledByEnvironment } from './guard.js';
+import { countAttempts, loadEntries, loadSettings, scoreStore } from './store.js';
+import { getIpGuardViewer } from './viewer.js';
+
+const ROUTE = '/_ipguard/admin';
+const here = Astro.url.pathname;
+const viewer = await getIpGuardViewer(Astro);
+const VIEWS = ['flagged', 'blacklist', 'banned', 'whitelist', 'settings', 'check'] as const;
+type View = (typeof VIEWS)[number];
+const requested = Astro.url.searchParams.get('view');
+const view: View = VIEWS.includes(requested as View) ? (requested as View) : 'flagged';
+const back = view === 'flagged' ? here : `${here}?view=${view}`;
+const errorCode = Astro.url.searchParams.get('error');
+const error = errorCode && errorCode in ERRORS ? ERRORS[errorCode as AdminError] : null;
+const saved = Astro.url.searchParams.has('saved');
+
+const entries = viewer.isAdmin ? await loadEntries() : [];
+const settings = await loadSettings();
+const yours = clientIp(Astro);
+const now = Date.now();
+const of = (list: ListName) =>
+	entries.filter((e) => e.list === list).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+const on = (list: ListName, range: string) => entries.some((e) => e.list === list && e.range === range);
+const when = (iso: string) =>
+	`${new Date(iso).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' })} UTC`;
+const SOURCE = { manual: 'Manual', abuseipdb: 'AbuseIPDB', rate_limit: 'Rate limit' } as const;
+const WINDOW_LABEL: Record<number, string> = {
+	300: '5 minutes',
+	900: '15 minutes',
+	1800: '30 minutes',
+	3600: '1 hour',
+	7200: '2 hours',
+	21600: '6 hours',
+	43200: '12 hours',
+	86400: '24 hours',
+};
+const envKey = Boolean(process.env.ABUSEIPDB_API_KEY?.trim());
+const pausedUntil = viewer.isAdmin ? await abuseIpDb().pausedUntil() : null;
+
+// "Check an address": what each step would decide (the Drupal module's pipeline report).
+const checkedText = Astro.url.searchParams.get('ip') ?? '';
+const checked = view === 'check' && checkedText ? parseIp(checkedText) : null;
+let report: null | {
+	address: string;
+	subject: string;
+	lists: ReturnType<typeof listsOf>;
+	attempts: number;
+	score: number | null;
+	decision: ReturnType<typeof decide>;
+} = null;
+if (checked && viewer.isAdmin) {
+	const lists = listsOf(entries, checked, now);
+	const subject = formatCidr(subjectOf(checked));
+	const attempts = await countAttempts(subject, settings.windowSeconds, now);
+	const score = await scoreStore.getScore(formatIp(checked)).catch(() => null);
+	report = {
+		address: formatIp(checked),
+		subject,
+		lists,
+		attempts,
+		score,
+		decision: decide({ on: lists, attempts, score, settings }),
+	};
+}
+const OUTCOME: Record<string, string> = {
+	allow: 'Allowed: the submission goes through and is counted.',
+	ban: 'Banned (and blacklisted): over the rate limit with a high AbuseIPDB score.',
+	blacklist: 'Blacklisted: the AbuseIPDB score is at or above the threshold.',
+	flag: 'Flagged and blocked until reviewed: over the rate limit.',
+};
+Astro.response.headers.set('Cache-Control', 'private, no-store');
+
+const rowForm = (id: string) => `ig-row-${id}`;
+type Row = IndexedEntry;
+---
+
+<div class="ipguard" data-ipguard data-view={view}>
+	{!viewer.isAdmin && <p class="ipguard__notice ipguard__notice--error" role="alert">Only admins can use IP Guard.</p>}
+	{viewer.isAdmin && (
+		<>
+			{disabledByEnvironment() && (
+				<p class="ipguard__notice ipguard__notice--error" role="alert" data-ipguard-env-off>
+					IP Guard is switched off by the <code>IPGUARD_DISABLE</code> environment variable: nothing is checked or banned.
+				</p>
+			)}
+			{!settings.enabled && !disabledByEnvironment() && (
+				<p class="ipguard__notice" role="note">IP Guard is turned off in Settings: nothing is checked or banned.</p>
+			)}
+			{saved && <p class="ipguard__notice" role="status" data-ipguard-saved>Saved.</p>}
+			{error && <p class="ipguard__notice ipguard__notice--error" role="alert" data-ipguard-error={errorCode}>{error}</p>}
+			{yours && (
+				<p class="ipguard__muted">
+					Your current address: <code data-ipguard-yours>{formatIp(yours)}</code> (it can't be banned, blacklisted or flagged).
+				</p>
+			)}
+
+			{view === 'flagged' && (
+				<section class="ipguard__group" aria-labelledby="ig-flagged">
+					<h2 class="ipguard__title" id="ig-flagged">Flagged</h2>
+					<p class="ipguard__muted">
+						Addresses that went over the rate limit ({settings.maxAttempts} attempts per {WINDOW_LABEL[settings.windowSeconds]}).
+						They <strong>can't submit forms until you decide</strong>: ban (no access to the site at all), blacklist (no
+						form submissions), whitelist (never checked again) or dismiss (they can submit again).
+					</p>
+					{of('flagged').length === 0 ? (
+						<p class="ipguard__muted" data-ipguard-empty>Nothing to review.</p>
+					) : (
+						<form method="post" action={ROUTE} data-ipguard-bulk="flagged">
+							<input type="hidden" name="action" value="review" />
+							<input type="hidden" name="return" value={back} />
+							<table class="ipguard__table">
+								<thead>
+									<tr><th scope="col"><span class="ipguard__sr">Select</span></th><th scope="col">Address</th><th scope="col">Reason</th><th scope="col">Flagged</th><th scope="col">Also on</th><th scope="col">Actions</th></tr>
+								</thead>
+								<tbody>
+									{of('flagged').map((row: Row) => (
+										<tr data-ipguard-row={row.id} data-ipguard-range={row.range}>
+											<td><input type="checkbox" name="ids" value={row.id} aria-label={`Select ${row.range}`} /></td>
+											<td><code>{row.range}</code></td>
+											<td>{row.reason}</td>
+											<td>{when(row.createdAt)}</td>
+											<td>{[on('blacklist', row.range) && 'Blacklist', on('banned', row.range) && 'Banned'].filter(Boolean).join(', ') || '—'}</td>
+											<td class="ipguard__actions">
+												<button type="submit" form={rowForm(row.id)} name="op" value="ban" class="ipguard__button ipguard__button--danger" data-ipguard-op="ban">Ban</button>
+												<button type="submit" form={rowForm(row.id)} name="op" value="blacklist" class="ipguard__button ipguard__button--danger" data-ipguard-op="blacklist">Blacklist</button>
+												<button type="submit" form={rowForm(row.id)} name="op" value="whitelist" class="ipguard__button" data-ipguard-op="whitelist">Whitelist</button>
+												<button type="submit" form={rowForm(row.id)} name="op" value="dismiss" class="ipguard__button" data-ipguard-op="dismiss">Dismiss</button>
+											</td>
+										</tr>
+									))}
+								</tbody>
+							</table>
+							<div class="ipguard__bulk">
+								<span class="ipguard__muted">Selected:</span>
+								<button type="submit" name="op" value="dismiss" class="ipguard__button">Dismiss</button>
+								<button type="submit" name="op" value="whitelist" class="ipguard__button">Whitelist</button>
+								<button type="submit" name="op" value="blacklist" class="ipguard__button ipguard__button--danger">Blacklist</button>
+								<button type="submit" name="op" value="ban" class="ipguard__button ipguard__button--danger">Ban</button>
+							</div>
+						</form>
+					)}
+					{of('flagged').map((row: Row) => (
+						<form method="post" action={ROUTE} id={rowForm(row.id)} hidden>
+							<input type="hidden" name="action" value="review" />
+							<input type="hidden" name="return" value={back} />
+							<input type="hidden" name="ids" value={row.id} />
+						</form>
+					))}
+				</section>
+			)}
+
+			{(view === 'blacklist' || view === 'banned' || view === 'whitelist') && (
+				<section class="ipguard__group" aria-labelledby="ig-list">
+					<h2 class="ipguard__title" id="ig-list">{view === 'blacklist' ? 'Blacklist' : view === 'banned' ? 'Banned' : 'Whitelist'}</h2>
+					<p class="ipguard__muted">
+						{view === 'blacklist' && 'These addresses can’t submit forms; the site stays reachable. A block can end on a date.'}
+						{view === 'banned' && 'These addresses get “Access denied” for every page of the site.'}
+						{view === 'whitelist' && 'These addresses are never checked, flagged, blacklisted or banned (your office, for testing).'}
+					</p>
+					{of(view).length === 0 ? (
+						<p class="ipguard__muted" data-ipguard-empty>None yet.</p>
+					) : (
+						<form method="post" action={ROUTE} data-ipguard-bulk={view}>
+							<input type="hidden" name="return" value={back} />
+							<table class="ipguard__table">
+								<thead>
+									<tr>
+										<th scope="col"><span class="ipguard__sr">Select</span></th>
+										<th scope="col">Address</th>
+										<th scope="col">{view === 'whitelist' ? 'Note' : 'Reason'}</th>
+										{view === 'blacklist' && <><th scope="col">Source</th><th scope="col">Expires</th></>}
+										<th scope="col">Added</th>
+										<th scope="col">Actions</th>
+									</tr>
+								</thead>
+								<tbody>
+									{of(view).map((row: Row) => {
+										const expired = Boolean(row.expiresAt && Date.parse(row.expiresAt) <= now);
+										return (
+											<tr data-ipguard-row={row.id} data-ipguard-range={row.range}>
+												<td><input type="checkbox" name="ids" value={row.id} aria-label={`Select ${row.range}`} /></td>
+												<td><code>{row.range}</code></td>
+												<td>{row.reason || '—'}</td>
+												{view === 'blacklist' && (
+													<>
+														<td>{SOURCE[row.source]}{row.score !== undefined ? ` (${row.score}%)` : ''}</td>
+														<td>{row.expiresAt ? `${when(row.expiresAt)}${expired ? ' (ended)' : ''}` : 'Never'}</td>
+													</>
+												)}
+												<td>{when(row.createdAt)} · {row.createdBy ?? 'Automatic'}</td>
+												<td class="ipguard__actions">
+													<button type="submit" form={rowForm(row.id)} name="action" value="remove" class="ipguard__button" data-ipguard-op="remove">Remove</button>
+													{view === 'blacklist' && !on('banned', row.range) && (
+														<button type="submit" form={rowForm(row.id)} name="action" value="ban" class="ipguard__button ipguard__button--danger" data-ipguard-op="ban">Ban</button>
+													)}
+												</td>
+											</tr>
+										);
+									})}
+								</tbody>
+							</table>
+							<div class="ipguard__bulk">
+								<span class="ipguard__muted">Selected:</span>
+								<button type="submit" name="action" value="remove" class="ipguard__button">Remove</button>
+								{view === 'blacklist' && <button type="submit" name="action" value="ban" class="ipguard__button ipguard__button--danger">Ban</button>}
+							</div>
+						</form>
+					)}
+					{of(view).map((row: Row) => (
+						<form method="post" action={ROUTE} id={rowForm(row.id)} hidden>
+							<input type="hidden" name="return" value={back} />
+							<input type="hidden" name="ids" value={row.id} />
+						</form>
+					))}
+
+					<form method="post" action={ROUTE} class="ipguard__add" data-ipguard-add={view}>
+						<input type="hidden" name="action" value="add" />
+						<input type="hidden" name="list" value={view} />
+						<input type="hidden" name="return" value={back} />
+						<h3 class="ipguard__subtitle">Add an address</h3>
+						{view === 'banned' && (
+							<p class="ipguard__muted">A banned address can't load any page. Your own address and whitelisted ones are refused.</p>
+						)}
+						<div class="ipguard__fields">
+							<label class="ipguard__field">
+								<span>Address or range</span>
+								<input class="ipguard__input" name="range" required maxlength="64" placeholder="203.0.113.7 or 203.0.113.0/24" autocomplete="off" spellcheck="false" />
+							</label>
+							<label class="ipguard__field ipguard__field--wide">
+								<span>{view === 'whitelist' ? 'Note' : 'Reason'}</span>
+								<input class="ipguard__input" name="reason" maxlength="255" placeholder={view === 'whitelist' ? 'e.g. Office' : 'For admins only; never shown to visitors'} />
+							</label>
+							{view === 'blacklist' && (
+								<label class="ipguard__field">
+									<span>Ends on (optional)</span>
+									<input class="ipguard__input" type="date" name="expires" />
+								</label>
+							)}
+							<button type="submit" class="ipguard__button ipguard__button--primary">Add</button>
+						</div>
+					</form>
+				</section>
+			)}
+
+			{view === 'settings' && (
+				<section class="ipguard__group" aria-labelledby="ig-settings">
+					<h2 class="ipguard__title" id="ig-settings">Settings</h2>
+					<form method="post" action={ROUTE} class="ipguard__settings" data-ipguard-settings>
+						<input type="hidden" name="action" value="settings" />
+						<input type="hidden" name="return" value={back} />
+						<label class="ipguard__check">
+							<input type="checkbox" name="enabled" checked={settings.enabled} />
+							<span>Check protected actions and enforce bans</span>
+						</label>
+						<fieldset class="ipguard__fieldset">
+							<legend>Rate limit</legend>
+							<div class="ipguard__fields">
+								<label class="ipguard__field">
+									<span>Attempts allowed</span>
+									<input class="ipguard__input" type="number" name="maxAttempts" min="1" max="1000" required value={settings.maxAttempts} />
+								</label>
+								<label class="ipguard__field">
+									<span>Per</span>
+									<select class="ipguard__input" name="windowSeconds">
+										{WINDOWS.map((w) => <option value={w} selected={w === settings.windowSeconds}>{WINDOW_LABEL[w]}</option>)}
+									</select>
+								</label>
+							</div>
+							<p class="ipguard__muted">An address over the limit is flagged and blocked until you review it.</p>
+						</fieldset>
+						<fieldset class="ipguard__fieldset">
+							<legend>AbuseIPDB</legend>
+							<p class="ipguard__muted">
+								With a key, each submitting address is checked against <a href="https://www.abuseipdb.com/" rel="noopener noreferrer">AbuseIPDB</a>
+								(results kept 24 hours; the free plan allows 1,000 checks a day). Addresses at or above the score are
+								blacklisted; banned if they're also over the rate limit. If AbuseIPDB can't answer, nobody is blocked.
+								Mention the check in the site's privacy policy.
+							</p>
+							{envKey ? (
+								<p class="ipguard__muted" data-ipguard-env-key>The key comes from the <code>ABUSEIPDB_API_KEY</code> environment variable.</p>
+							) : (
+								<div class="ipguard__fields">
+									<label class="ipguard__field ipguard__field--wide">
+										<span>API key {settings.apiKey ? '(saved; leave empty to keep it)' : ''}</span>
+										<input class="ipguard__input" type="password" name="apiKey" autocomplete="off" maxlength="200" />
+									</label>
+									{settings.apiKey && (
+										<label class="ipguard__check"><input type="checkbox" name="clearKey" /><span>Remove the saved key</span></label>
+									)}
+								</div>
+							)}
+							<div class="ipguard__fields">
+								<label class="ipguard__field">
+									<span>Blacklist at score (0–100)</span>
+									<input class="ipguard__input" type="number" name="minScore" min="0" max="100" required value={settings.minScore} />
+								</label>
+							</div>
+							{pausedUntil && (
+								<p class="ipguard__notice" data-ipguard-paused>
+									Lookups are paused until {when(new Date(pausedUntil).toISOString())} (the key was refused or the daily limit was reached).
+									<button type="submit" form="ig-resume" class="ipguard__button">Resume now</button>
+								</p>
+							)}
+						</fieldset>
+						<label class="ipguard__field">
+							<span>Message for refused visitors (never says why)</span>
+							<textarea class="ipguard__input" name="blockMessage" rows="3" maxlength="512" required>{settings.blockMessage}</textarea>
+						</label>
+						<div><button type="submit" class="ipguard__button ipguard__button--primary">Save settings</button></div>
+					</form>
+					<form method="post" action={ROUTE} id="ig-resume" hidden>
+						<input type="hidden" name="action" value="resume" />
+						<input type="hidden" name="return" value={back} />
+					</form>
+				</section>
+			)}
+
+			{view === 'check' && (
+				<section class="ipguard__group" aria-labelledby="ig-check">
+					<h2 class="ipguard__title" id="ig-check">Check an address</h2>
+					<p class="ipguard__muted">What would happen to a form submission from this address right now, step by step.</p>
+					<form method="get" action={here} class="ipguard__fields" data-ipguard-check>
+						<input type="hidden" name="view" value="check" />
+						<label class="ipguard__field">
+							<span>Address</span>
+							<input class="ipguard__input" name="ip" required maxlength="64" value={checkedText} autocomplete="off" spellcheck="false" />
+						</label>
+						<button type="submit" class="ipguard__button ipguard__button--primary">Check</button>
+					</form>
+					{checkedText && !checked && <p class="ipguard__notice ipguard__notice--error" role="alert">That isn't a valid address.</p>}
+					{report && (
+						<ol class="ipguard__report" data-ipguard-report>
+							<li>Address <code>{report.address}</code>; automatic actions apply to <code>{report.subject}</code>.</li>
+							<li>{report.lists.whitelist ? `Whitelisted (${report.lists.whitelist.range}): always allowed.` : 'Not whitelisted.'}</li>
+							<li>{report.lists.banned ? `Banned (${report.lists.banned.range}): no access to the site.` : 'Not banned.'}</li>
+							<li>{report.lists.blacklist ? `Blacklisted (${report.lists.blacklist.range}): submissions refused.` : 'Not blacklisted.'}</li>
+							<li>{report.lists.flagged ? `Flagged (${report.lists.flagged.range}): blocked until reviewed.` : 'Not flagged.'}</li>
+							<li>Rate limit: {report.attempts} of {settings.maxAttempts} attempts in the last {WINDOW_LABEL[settings.windowSeconds]}.</li>
+							<li>
+								AbuseIPDB: {report.score !== null ? `score ${report.score}% (threshold ${settings.minScore}%).` : 'not looked up yet.'}
+								{report.score === null && apiKeyOf(settings) && (
+									<form method="post" action={ROUTE} class="ipguard__inline">
+										<input type="hidden" name="action" value="lookup" />
+										<input type="hidden" name="ip" value={report.address} />
+										<input type="hidden" name="return" value={`${here}?view=check`} />
+										<button type="submit" class="ipguard__button" data-ipguard-lookup>Ask AbuseIPDB now (uses one lookup)</button>
+									</form>
+								)}
+							</li>
+							<li data-ipguard-outcome={report.decision.action}>
+								<strong>Outcome: {report.decision.action === 'refuse' ? `refused (${report.decision.because}).` : OUTCOME[report.decision.action]}</strong>
+							</li>
+						</ol>
+					)}
+				</section>
+			)}
+		</>
+	)}
+</div>
+
+<style>
+	.ipguard { display: flex; flex-direction: column; gap: 1rem; padding-bottom: 2rem; color: var(--text-normal, inherit); }
+	.ipguard__group { display: flex; flex-direction: column; gap: 0.75rem; padding: 1rem; background: var(--background-step-1); border: 1px solid var(--border); border-radius: var(--radius-md, 0.5rem); }
+	.ipguard__title { margin: 0; font-size: 1.125rem; }
+	.ipguard__subtitle { margin: 0.5rem 0 0; font-size: 1rem; }
+	.ipguard__muted { margin: 0; color: var(--text-muted, inherit); font-size: 0.875rem; line-height: 1.5; }
+	.ipguard__notice { margin: 0; padding: 0.6rem 0.8rem; background: var(--background-step-1); border: 1px solid var(--border); border-radius: var(--radius-md, 0.5rem); }
+	.ipguard__notice--error { border-left: 4px solid var(--danger-base, hsl(339 80% 45%)); }
+	.ipguard__table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+	.ipguard__table th, .ipguard__table td { padding: 0.45rem 0.5rem; text-align: left; vertical-align: middle; border-bottom: 1px solid var(--border); }
+	.ipguard__table th { font-weight: 600; }
+.ipguard code {
+		font-size: 0.8125rem;
+		overflow-wrap: anywhere;
+	}
+	.ipguard__table code {
+		white-space: nowrap;
+	}
+	.ipguard__actions { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+	.ipguard__bulk { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-top: 0.5rem; }
+	.ipguard__add, .ipguard__settings { display: flex; flex-direction: column; gap: 0.75rem; }
+	.ipguard__fields { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.75rem; }
+	.ipguard__field { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.875rem; min-width: 12rem; }
+	.ipguard__field--wide { flex: 1 1 18rem; }
+	.ipguard__input { padding: 0.45rem 0.6rem; font: inherit; color: inherit; background: var(--background-base); border: 1px solid var(--border); border-radius: calc(var(--radius-md, 0.5rem) - 0.125rem); }
+	.ipguard__check { display: flex; gap: 0.5rem; align-items: center; font-size: 0.875rem; }
+	.ipguard__fieldset { display: flex; flex-direction: column; gap: 0.6rem; margin: 0; padding: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius-md, 0.5rem); }
+	.ipguard__fieldset legend { padding: 0 0.25rem; font-weight: 600; }
+	.ipguard__button { padding: 0.35rem 0.7rem; font: inherit; font-size: 0.8125rem; color: inherit; background: var(--background-base); border: 1px solid var(--border); border-radius: calc(var(--radius-md, 0.5rem) - 0.125rem); cursor: pointer; }
+	.ipguard__button:hover { border-color: var(--primary-base); }
+	.ipguard__button--primary { color: var(--text-inverted, #fff); background: var(--primary-base); border-color: var(--primary-base); }
+	.ipguard__button--danger { color: #fff; background: var(--danger-base, hsl(339 80% 45%)); border-color: var(--danger-base, hsl(339 80% 45%)); }
+	.ipguard__button:focus-visible, .ipguard__input:focus-visible, .ipguard__check input:focus-visible { outline: 2px solid var(--primary-base); outline-offset: 2px; }
+	.ipguard__report { display: flex; flex-direction: column; gap: 0.4rem; margin: 0; padding-left: 1.25rem; font-size: 0.9375rem; }
+	.ipguard__inline { display: inline; margin-left: 0.5rem; }
+	.ipguard__sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+</style>
