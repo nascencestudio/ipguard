@@ -46,6 +46,8 @@ verifyDepsBeforeRun: error
 
 # Forced versions of transitive dependencies. Reason and exit condition per entry.
 overrides:
-  # GHSA-68fv-2mgg-jv7q (high, event-loop DoS via crafted source maps; build-time only, via
-  # postcss/css-tree). 1.2.2 is the fix. Remove once vite/postcss/css-tree resolve >=1.2.2.
-  source-map-js: 1.2.2
+  # GHSA-4qx8-w7c3-pj3p, GHSA-9j65-hcg3-gc64, GHSA-9qmh-m7c6-f92p (high, CPU DoS in toml <=5.0.0; every
+  # 4.x is affected). Via StudioCMS → @withstudiocms/effect → @effect/cli, which parses config files with
+  # Toml.parse() and asks for ^4.3.0. 5.0.1 (2026-10-12) keeps parse() the same (checked: same exports, no
+  # dependencies, no install scripts, integrity verified). Remove when @effect/cli moves to toml >=5.0.1.
+  '@effect/cli>toml': 5.0.1
