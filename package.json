@@ -46,7 +46,7 @@
     "@types/node": "22.20.4",
     "astro": "7.4.1",
     "studiocms": "0.7.0",
-    "typescript": "6.0.3",
+    "typescript": "7.0.2",
     "vitest": "5.0.5"
   },
   "engines": {
