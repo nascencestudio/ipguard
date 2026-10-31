@@ -48,8 +48,3 @@ jobs:
       # `pnpm stage approve`). The trusted publisher keeps "allow npm publish" off, so a stolen
       # workflow identity can only stage, never release.
       - run: pnpm stage publish --provenance --access public --no-git-checks
-        # First release only (trusted publishers attach to existing packages): a short-lived token in the
-        # `npm` environment's secrets. Remove this env, the secret and the token once the trusted publisher
-        # is set up on npmjs.com (Tapestry ADR 0035).
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
