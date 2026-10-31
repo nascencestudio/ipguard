@@ -42,9 +42,9 @@
     "studiocms": "^0.6.0 || ^0.7.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.15",
+    "@biomejs/biome": "2.6.3",
     "@types/node": "22.20.4",
-    "astro": "7.4.1",
+    "astro": "7.4.2",
     "studiocms": "0.7.0",
     "typescript": "6.0.3",
     "vitest": "5.0.5"
