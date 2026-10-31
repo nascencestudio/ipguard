@@ -18,7 +18,9 @@ the whole project is the playground's; this repo has its own short one.
 
 ## Status
 
-- 0.1.0 built 2026-10-20, local only (not on GitHub or npm). The first npm release needs a one-time token.
+- **0.1.0 released 2026-10-31** (GitHub `nascencestudio/ipguard`, npm with provenance). Releases: bump
+  `version`, PR, merge, GitHub release `v<version>`, approve the staged version on npmjs.com (trusted
+  publishing only; no tokens).
 
 ## Rules
 
