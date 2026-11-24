@@ -1,6 +1,6 @@
 {
   "name": "@nascencestudio/ipguard",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "IP protection for StudioCMS sites: review lists (whitelist, flagged, blacklist, banned), rate limiting, AbuseIPDB reputation checks and site-wide bans",
   "license": "MIT",
   "author": "Nascence Studio",
