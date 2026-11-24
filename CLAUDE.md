@@ -21,6 +21,7 @@ the whole project is the playground's; this repo has its own short one.
 - **0.1.0 released 2026-10-31** (GitHub `nascencestudio/ipguard`, npm with provenance). Releases: bump
   `version`, PR, merge, GitHub release `v<version>`, approve the staged version on npmjs.com (trusted
   publishing only; no tokens).
+- **0.1.1 (2026-11-24):** dependency and CI refresh, minimatch advisory cleared; no code changes.
 
 ## Rules
 

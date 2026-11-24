@@ -5,6 +5,14 @@ in [tapestry-playground](https://github.com/nascencestudio/tapestry-playground/b
 
 ---
 
+## 2026-11-24: 0.1.1
+
+- Releases the 2026-11-23 refresh below (dev dependencies and CI only; no code or runtime changes) and
+  publishes through the recreated npm trusted publisher (the first one had expired unused).
+- minimatch GHSA-g3hv-75wg-m249 fixed: `@ts-morph/common` 0.29.1 → minimatch 11.0.9 (with provenance) and
+  `@isaacs/nonrecursive-glob-match` 1.1.0; the ignore entry is removed. braces GHSA-vfj7-8cjw-p6xm is still
+  unpatched: re-check 2026-12-24.
+
 ## 2026-11-23: Dev dependency refresh (no release)
 
 - `astro` 7.4.1 → 7.4.13 (dev; clears GHSA-mh32-jxcr-mh9f, low, and GHSA-r3h5-4585-7x3w, moderate),
